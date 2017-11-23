@@ -1,0 +1,65 @@
+{
+    "manifestVersion": 1,
+    "id": "FabienLavocat-PurgeAzureCDNEndpoint",
+    "name": "Purge Azure CDN Endpoint",
+    "version": "1.0.0",
+    "publisher": "fabienlavocat",
+    "public": false,
+    "targets": [
+      {
+        "id": "Microsoft.VisualStudio.Services"
+      }
+    ],
+    "description": "Purge an Azure CDN Endpoint",
+    "categories": [
+      "Build and release"
+    ],
+    "tags": [
+      "release",
+      "azure",
+      "cdn",
+      "purge"
+    ],
+    "content": {
+      "details": {
+        "path": "README.md"
+      },
+      "license": {
+        "path": "LICENSE"
+      }
+    },
+    "links": {
+      "getstarted": {
+        "uri": "https://github.com/FabienLavocat/vsts-tasks"
+      },
+      "support": {
+        "uri": "https://github.com/FabienLavocat/vsts-tasks"
+      }
+    },
+    "branding": {
+      "color": "rgb(36, 43, 50)",
+      "theme": "dark"
+    },
+    "icons": {
+      "default": "logo.png"
+    },
+    "files": [
+      {
+        "path": "PurgeAzureCDNEndpoint"
+      }
+    ],
+  
+    "contributions": [
+      {
+        "id": "PurgeAzureCDNEndpoint",
+        "type": "ms.vss-distributed-task.task",
+        "targets": [
+          "ms.vss-distributed-task.tasks"
+        ],
+        "properties": {
+          "name": "PurgeAzureCDNEndpoint"
+        }
+      }
+    ]
+  }
+  
