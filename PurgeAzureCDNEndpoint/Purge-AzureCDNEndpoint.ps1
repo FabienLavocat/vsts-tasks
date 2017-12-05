@@ -10,16 +10,6 @@ try {
     # Initialize Azure.
     Import-Module $PSScriptRoot\ps_modules\VstsAzureHelpers_
     Initialize-Azure
-
-    # Remove all commands imported from VstsTaskSdk, other than Out-Default.
-    # Remove all commands imported from VstsAzureHelpers_.
-    Get-ChildItem -LiteralPath function: |
-    Where-Object {
-        ($_.ModuleName -eq 'VstsTaskSdk' -and $_.Name -ne 'Out-Default') -or
-        ($_.Name -eq 'Invoke-VstsTaskScript') -or
-        ($_.ModuleName -eq 'VstsAzureHelpers_' )
-    } |
-    Remove-Item
     
     # For compatibility with the legacy handler implementation, set the error action
     # preference to continue. An implication of changing the preference to Continue,
