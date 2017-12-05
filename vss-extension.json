@@ -4,7 +4,7 @@
     "name": "Purge Azure CDN Endpoint",
     "version": "1.0.2",
     "publisher": "fabienlavocat",
-    "public": false,
+    "public": true,
     "targets": [
       {
         "id": "Microsoft.VisualStudio.Services"
