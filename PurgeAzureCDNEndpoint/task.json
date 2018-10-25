@@ -54,6 +54,14 @@
             "visibleRule": "ConnectedServiceNameSelector = ConnectedServiceNameARM"
         },
         {
+            "name": "TenantId",
+            "type": "string",
+            "label": "Tenant ID",
+            "defaultValue": "",
+            "required": true,
+            "helpMarkDown": "Specifies azure tenant ID."
+        },
+        {
             "name": "ResourceGroupName",
             "type": "pickList",
             "label": "Resource group",
