@@ -6,6 +6,8 @@ try {
     $EndpointName = Get-VstsInput -Name EndpointName -Require
     $ProfileName = Get-VstsInput -Name ProfileName -Require
     $PurgeContent = Get-VstsInput -Name PurgeContent -Require
+    $SubscriptionId = Get-VstsInput -Name SubscriptionId -Require
+    $TenantId = Get-VstsInput -Name TenantId -Require
 
     # Initialize Azure.
     Import-Module $PSScriptRoot\ps_modules\VstsAzureHelpers_
