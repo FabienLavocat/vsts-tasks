@@ -1,22 +1,3 @@
-﻿$script:isClassic = $null
-$script:classicVersion = $null
-
-function Add-Certificate {
-    [CmdletBinding()]
-    param([Parameter(Mandatory=$true)]$Endpoint)
-
-    # Add the certificate to the cert store.
-    $bytes = [System.Convert]::FromBase64String($Endpoint.Auth.Parameters.Certificate)
-    $certificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2
-    $certificate.Import($bytes)
-    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store(
-        ([System.Security.Cryptography.X509Certificates.StoreName]::My),
-        ([System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser))
-    $store.Open(([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite))
-    $store.Add($certificate)
-    $store.Close()
-    return $certificate
-}
 
 function Initialize-AzureSubscription {
     [CmdletBinding()]
@@ -26,9 +7,39 @@ function Initialize-AzureSubscription {
         [Parameter(Mandatory=$false)]
         [string]$StorageAccount)
 
+    #Set UserAgent for Azure Calls
+    Set-UserAgent
+    
+    # Clear context only for Azure RM
+    if ($Endpoint.Auth.Scheme -eq 'ServicePrincipal' -and !$script:azureModule -and (Get-Command -Name "Clear-AzureRmContext" -ErrorAction "SilentlyContinue")) {
+        Write-Host "##[command]Clear-AzureRmContext -Scope Process"
+        $null = Clear-AzureRmContext -Scope Process
+        Write-Host "##[command]Clear-AzureRmContext -Scope CurrentUser -Force -ErrorAction SilentlyContinue"
+        $null = Clear-AzureRmContext -Scope CurrentUser -Force -ErrorAction SilentlyContinue
+    }
+
+    $environmentName = "AzureCloud"
+    if($Endpoint.Data.Environment) {
+        $environmentName = $Endpoint.Data.Environment
+        if($environmentName -eq "AzureStack")
+        {
+            Add-AzureStackAzureRmEnvironment -endpoint $Endpoint -name "AzureStack"
+        }
+    }
+    
+    $scopeLevel = "Subscription"
+    
+    If ($Endpoint.PSObject.Properties['Data'])
+    {
+        If ($Endpoint.Data.PSObject.Properties['scopeLevel'])
+        {
+            $scopeLevel = $Endpoint.Data.scopeLevel
+        }
+    }
+
     if ($Endpoint.Auth.Scheme -eq 'Certificate') {
         # Certificate is only supported for the Azure module.
-        if (!$script:isClassic) {
+        if (!$script:azureModule) {
             throw (Get-VstsLocString -Key AZ_CertificateAuthNotSupported)
         }
 
@@ -42,41 +53,67 @@ function Initialize-AzureSubscription {
         }
 
         # Set the subscription.
-        Write-Host "##[command]Set-AzureSubscription -SubscriptionName $($Endpoint.Data.SubscriptionName) -SubscriptionId $($Endpoint.Data.SubscriptionId) -Certificate ******** -Environment AzureCloud $(Format-Splat $additional)"
-        Set-AzureSubscription -SubscriptionName $Endpoint.Data.SubscriptionName -SubscriptionId $Endpoint.Data.SubscriptionId -Certificate $certificate -Environment AzureCloud @additional
+        Write-Host "##[command]Set-AzureSubscription -SubscriptionName $($Endpoint.Data.SubscriptionName) -SubscriptionId $($Endpoint.Data.SubscriptionId) -Certificate ******** -Environment $environmentName $(Format-Splat $additional)"
+        Set-AzureSubscription -SubscriptionName $Endpoint.Data.SubscriptionName -SubscriptionId $Endpoint.Data.SubscriptionId -Certificate $certificate -Environment $environmentName @additional
         Set-CurrentAzureSubscription -SubscriptionId $Endpoint.Data.SubscriptionId -StorageAccount $StorageAccount
     } elseif ($Endpoint.Auth.Scheme -eq 'UserNamePassword') {
         $psCredential = New-Object System.Management.Automation.PSCredential(
             $Endpoint.Auth.Parameters.UserName,
             (ConvertTo-SecureString $Endpoint.Auth.Parameters.Password -AsPlainText -Force))
-        if ($script:isClassic) {
+
+        # Add account (Azure).
+        if ($script:azureModule) {
             try {
                 Write-Host "##[command]Add-AzureAccount -Credential $psCredential"
                 $null = Add-AzureAccount -Credential $psCredential
             } catch {
                 # Provide an additional, custom, credentials-related error message.
                 Write-VstsTaskError -Message $_.Exception.Message
+                Assert-TlsError -exception $_.Exception
                 throw (New-Object System.Exception((Get-VstsLocString -Key AZ_CredentialsError), $_.Exception))
             }
+        }
 
-            Set-CurrentAzureSubscription -SubscriptionId $Endpoint.Data.SubscriptionId -StorageAccount $StorageAccount
-        } else {
+        # Add account (AzureRM).
+        if ($script:azureRMProfileModule) {
             try {
-                Write-Host "##[command]Add-AzureRMAccount -Credential $psCredential"
-                $null = Add-AzureRMAccount -Credential $psCredential
+                if (Get-Command -Name "Add-AzureRmAccount" -ErrorAction "SilentlyContinue") {
+                    Write-Host "##[command] Add-AzureRMAccount -Credential $psCredential"
+                    $null = Add-AzureRMAccount -Credential $psCredential
+                } else {
+                    Write-Host "##[command] Connect-AzureRMAccount -Credential $psCredential"
+                    $null = Connect-AzureRMAccount -Credential $psCredential
+                }
             } catch {
                 # Provide an additional, custom, credentials-related error message.
                 Write-VstsTaskError -Message $_.Exception.Message
+                Assert-TlsError -exception $_.Exception
                 throw (New-Object System.Exception((Get-VstsLocString -Key AZ_CredentialsError), $_.Exception))
             }
+        }
 
+        # Select subscription (Azure).
+        if ($script:azureModule) {
+            Set-CurrentAzureSubscription -SubscriptionId $Endpoint.Data.SubscriptionId -StorageAccount $StorageAccount
+        }
+
+        # Select subscription (AzureRM).
+        if ($script:azureRMProfileModule) {
             Set-CurrentAzureRMSubscription -SubscriptionId $Endpoint.Data.SubscriptionId
         }
-    } elseif ($Endpoint.Auth.Scheme -eq 'ServicePrincipal') {
-        $psCredential = New-Object System.Management.Automation.PSCredential(
-            $Endpoint.Auth.Parameters.ServicePrincipalId,
-            (ConvertTo-SecureString $Endpoint.Auth.Parameters.ServicePrincipalKey -AsPlainText -Force))
-        if ($script:isClassic -and $script:classicVersion -lt ([version]'0.9.9')) {
+    } 
+    elseif ($Endpoint.Auth.Scheme -eq 'ServicePrincipal') {
+        
+        if ($Endpoint.Auth.Parameters.AuthenticationType -eq 'SPNCertificate') {
+            $servicePrincipalCertificate = Add-Certificate -Endpoint $Endpoint -ServicePrincipal
+        }
+        else {
+            $psCredential = New-Object System.Management.Automation.PSCredential(
+                $Endpoint.Auth.Parameters.ServicePrincipalId,
+                (ConvertTo-SecureString $Endpoint.Auth.Parameters.ServicePrincipalKey -AsPlainText -Force))
+        }
+
+        if ($script:azureModule -and $script:azureModule.Version -lt ([version]'0.9.9')) {
             # Service principals arent supported from 0.9.9 and greater in the Azure module.
             try {
                 Write-Host "##[command]Add-AzureAccount -ServicePrincipal -Tenant $($Endpoint.Auth.Parameters.TenantId) -Credential $psCredential"
@@ -84,29 +121,84 @@ function Initialize-AzureSubscription {
             } catch {
                 # Provide an additional, custom, credentials-related error message.
                 Write-VstsTaskError -Message $_.Exception.Message
+                Assert-TlsError -exception $_.Exception
                 throw (New-Object System.Exception((Get-VstsLocString -Key AZ_ServicePrincipalError), $_.Exception))
             }
 
             Set-CurrentAzureSubscription -SubscriptionId $Endpoint.Data.SubscriptionId -StorageAccount $StorageAccount
-        } elseif ($script:isClassic) {
+        } elseif ($script:azureModule) {
             # Throw if >=0.9.9 Azure.
-            throw (Get-VstsLocString -Key "AZ_ServicePrincipalAuthNotSupportedAzureVersion0" -ArgumentList $script:classicVersion)
+            throw (Get-VstsLocString -Key "AZ_ServicePrincipalAuthNotSupportedAzureVersion0" -ArgumentList $script:azureModule.Version)
         } else {
-            # Else, this is AzureRM.
+            # Else, this is AzureRM.            
             try {
-                Write-Host "##[command]Add-AzureRMAccount -ServicePrincipal -Tenant $($Endpoint.Auth.Parameters.TenantId) -Credential $psCredential"
-                $null = Add-AzureRMAccount -ServicePrincipal -Tenant $Endpoint.Auth.Parameters.TenantId -Credential $psCredential
-            } catch {
+                if (Get-Command -Name "Add-AzureRmAccount" -ErrorAction "SilentlyContinue") {                    
+                    if (CmdletHasMember -cmdlet "Add-AzureRMAccount" -memberName "EnvironmentName") {
+                        
+                        if ($Endpoint.Auth.Parameters.AuthenticationType -eq "SPNCertificate") {
+                            Write-Host "##[command]Add-AzureRMAccount -ServicePrincipal -Tenant $($Endpoint.Auth.Parameters.TenantId) -CertificateThumbprint ****** -ApplicationId $($Endpoint.Auth.Parameters.ServicePrincipalId) -EnvironmentName $environmentName"
+                            $null = Add-AzureRmAccount -ServicePrincipal -Tenant $Endpoint.Auth.Parameters.TenantId -CertificateThumbprint $servicePrincipalCertificate.Thumbprint -ApplicationId $Endpoint.Auth.Parameters.ServicePrincipalId -EnvironmentName $environmentName
+                        }
+                        else {
+                            Write-Host "##[command]Add-AzureRMAccount -ServicePrincipal -Tenant $($Endpoint.Auth.Parameters.TenantId) -Credential $psCredential -EnvironmentName $environmentName"
+                            $null = Add-AzureRMAccount -ServicePrincipal -Tenant $Endpoint.Auth.Parameters.TenantId -Credential $psCredential -EnvironmentName $environmentName
+                        }
+                    }
+                    else {
+                        if ($Endpoint.Auth.Parameters.AuthenticationType -eq "SPNCertificate") {
+                            Write-Host "##[command]Add-AzureRMAccount -ServicePrincipal -Tenant $($Endpoint.Auth.Parameters.TenantId) -CertificateThumbprint ****** -ApplicationId $($Endpoint.Auth.Parameters.ServicePrincipalId) -Environment $environmentName"
+                            $null = Add-AzureRmAccount -ServicePrincipal -Tenant $Endpoint.Auth.Parameters.TenantId -CertificateThumbprint $servicePrincipalCertificate.Thumbprint -ApplicationId $Endpoint.Auth.Parameters.ServicePrincipalId -Environment $environmentName
+                        }
+                        else {
+                            Write-Host "##[command]Add-AzureRMAccount -ServicePrincipal -Tenant $($Endpoint.Auth.Parameters.TenantId) -Credential $psCredential -Environment $environmentName"
+                            $null = Add-AzureRMAccount -ServicePrincipal -Tenant $Endpoint.Auth.Parameters.TenantId -Credential $psCredential -Environment $environmentName
+                        }
+                    }
+                }
+                else {
+                    if ($Endpoint.Auth.Parameters.AuthenticationType -eq "SPNCertificate") {
+                        Write-Host "##[command]Connect-AzureRMAccount -ServicePrincipal -Tenant $($Endpoint.Auth.Parameters.TenantId) -CertificateThumbprint ****** -ApplicationId $($Endpoint.Auth.Parameters.ServicePrincipalId) -Environment $environmentName"
+                        $null = Connect-AzureRmAccount -ServicePrincipal -Tenant $Endpoint.Auth.Parameters.TenantId -CertificateThumbprint $servicePrincipalCertificate.Thumbprint -ApplicationId $Endpoint.Auth.Parameters.ServicePrincipalId -Environment $environmentName
+                    }
+                    else {
+                        Write-Host "##[command]Connect-AzureRMAccount -ServicePrincipal -Tenant $($Endpoint.Auth.Parameters.TenantId) -Credential $psCredential -Environment $environmentName"
+                        $null = Connect-AzureRMAccount -ServicePrincipal -Tenant $Endpoint.Auth.Parameters.TenantId -Credential $psCredential -Environment $environmentName
+                    }
+                }
+            } 
+            catch {
                 # Provide an additional, custom, credentials-related error message.
                 Write-VstsTaskError -Message $_.Exception.Message
+                Assert-TlsError -exception $_.Exception
                 throw (New-Object System.Exception((Get-VstsLocString -Key AZ_ServicePrincipalError), $_.Exception))
             }
-
-            Set-CurrentAzureRMSubscription -SubscriptionId $Endpoint.Data.SubscriptionId -TenantId $Endpoint.Auth.Parameters.TenantId
+            
+            if($scopeLevel -eq "Subscription")
+            {
+                Set-CurrentAzureRMSubscription -SubscriptionId $Endpoint.Data.SubscriptionId -TenantId $Endpoint.Auth.Parameters.TenantId
+            }
         }
-    } else {
+    } elseif ($Endpoint.Auth.Scheme -eq 'ManagedServiceIdentity') {
+        $accountId = $env:BUILD_BUILDID 
+        if($env:RELEASE_RELEASEID){
+            $accountId = $env:RELEASE_RELEASEID 
+        }
+        $date = Get-Date -Format o
+        $accountId = -join($accountId, "-", $date)
+        $access_token = Get-MsiAccessToken $Endpoint
+        try {
+            Write-Host "##[command]Add-AzureRmAccount  -AccessToken ****** -AccountId $accountId "
+            $null = Add-AzureRmAccount -AccessToken $access_token -AccountId $accountId
+        } catch {
+            # Provide an additional, custom, credentials-related error message.
+            Write-VstsTaskError -Message $_.Exception.Message
+            throw (New-Object System.Exception((Get-VstsLocString -Key AZ_MsiFailure), $_.Exception))
+        }
+        
+        Set-CurrentAzureRMSubscription -SubscriptionId $Endpoint.Data.SubscriptionId -TenantId $Endpoint.Auth.Parameters.TenantId
+    }else {
         throw (Get-VstsLocString -Key AZ_UnsupportedAuthScheme0 -ArgumentList $Endpoint.Auth.Scheme)
-    }
+    } 
 }
 
 function Set-CurrentAzureSubscription {
@@ -117,7 +209,7 @@ function Set-CurrentAzureSubscription {
         [string]$StorageAccount)
 
     $additional = @{ }
-    if ($script:isClassic -and $script:classicVersion -lt ([version]'0.8.15')) {
+    if ($script:azureModule.Version -lt ([version]'0.8.15')) {
         $additional['Default'] = $true # The Default switch is required prior to 0.8.15.
     }
 
@@ -138,22 +230,13 @@ function Set-CurrentAzureRMSubscription {
 
     $additional = @{ }
     if ($TenantId) { $additional['TenantId'] = $TenantId }
-    Write-Host "##[command]Select-AzureRMSubscription -SubscriptionId $SubscriptionId $(Format-Splat $additional)"
-    $null = Select-AzureRMSubscription -SubscriptionId $SubscriptionId @additional
-}
 
-function Format-Splat {
-    [CmdletBinding()]
-    param([Parameter(Mandatory = $true)][hashtable]$Hashtable)
-
-    # Collect the parameters (names and values) in an array.
-    $parameters = foreach ($key in $Hashtable.Keys) {
-        $value = $Hashtable[$key]
-        # If the value is a bool, format the parameter as a switch (ending with ':').
-        if ($value -is [bool]) { "-$($key):" } else { "-$key" }
-        $value
+    if (Get-Command -Name "Select-AzureRmSubscription" -ErrorAction "SilentlyContinue") {
+        Write-Host "##[command] Select-AzureRMSubscription -SubscriptionId $SubscriptionId $(Format-Splat $additional)"
+        $null = Select-AzureRMSubscription -SubscriptionId $SubscriptionId @additional
     }
-
-    $OFS = " "
-    "$parameters" # String join the array.
+    else {
+        Write-Host "##[command] Set-AzureRmContext -SubscriptionId $SubscriptionId $(Format-Splat $additional)"
+        $null = Set-AzureRmContext -SubscriptionId $SubscriptionId @additional
+    }
 }
