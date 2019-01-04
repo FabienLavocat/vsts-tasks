@@ -2,7 +2,7 @@
     "manifestVersion": 1,
     "id": "FabienLavocat-PurgeAzureCDNEndpoint",
     "name": "Purge Azure CDN Endpoint",
-    "version": "1.0.2",
+    "version": "2.1.0",
     "publisher": "fabienlavocat",
     "public": true,
     "targets": [

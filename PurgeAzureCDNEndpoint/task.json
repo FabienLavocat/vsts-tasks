@@ -4,16 +4,17 @@
     "friendlyName": "Purge Azure CDN Endpoint",
     "description": "Purge Azure CDN Endpoint",
     "helpMarkDown": "[More Information](https://github.com/FabienLavocat/vsts-tasks)",
-    "category": "Deploy",
+    "category": "Azure Pipelines",
     "visibility": [
         "Build",
         "Release"
     ],
     "author": "Fabien Lavocat",
+    "preview": false,
     "version": {
-      "Major": 1,
-      "Minor": 0,
-      "Patch": 1
+      "Major": 2,
+      "Minor": 1,
+      "Patch": 0
     },
     "demands": [
         "azureps"
@@ -82,11 +83,11 @@
         },
         {
             "name": "PurgeContent",
-            "type": "string",
+            "type": "multiLine",
             "label": "Purge Content",
             "defaultValue": "/*",
             "required": true,
-            "helpMarkDown": "Specifies the path for the content on the origin server to purge."
+            "helpMarkDown": "Specifies the path for the content on the origin server to purge. You may enter one path per line."
         }
     ],
     "dataSourceBindings": [
